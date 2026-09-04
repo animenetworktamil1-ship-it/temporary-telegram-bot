@@ -1,4 +1,5 @@
 import os
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from threading import Thread
 
@@ -11,75 +12,105 @@ from telegram.ext import (
     ContextTypes,
 )
 
+# =========================
+# CONFIG
+# =========================
+
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-CHANNEL_ID = os.environ["CHANNEL_ID"]
+
+# Your Telegram user ID.
+# Example: 123456789
+ADMIN_ID = int(os.environ["ADMIN_ID"])
+
+DB_FILE = "channels.db"
 
 app = Flask(__name__)
 
 
-@app.route("/")
-def home():
-    return "Temporary Join Request Bot is running!"
+# =========================
+# DATABASE
+# =========================
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS channels (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT UNIQUE NOT NULL,
+            title TEXT NOT NULL,
+            username TEXT
+        )
+    """)
+
+    conn.commit()
+    conn.close()
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def add_channel(chat_id, title, username):
 
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "🔗 Get Join Request Link",
-                callback_data="get_link"
-            )
-        ]
-    ]
+    conn = sqlite3.connect(DB_FILE)
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    cursor = conn.cursor()
 
-    await update.message.reply_text(
-        "👋 Welcome!\n\n"
-        "Tap the button below to generate a temporary "
-        "Channel Join Request link.\n\n"
-        "⏳ Link validity: 2 minutes",
-        reply_markup=reply_markup
+    cursor.execute(
+        """
+        INSERT OR REPLACE INTO channels
+        (chat_id, title, username)
+        VALUES (?, ?, ?)
+        """,
+        (str(chat_id), title, username)
     )
 
+    conn.commit()
+    conn.close()
 
-async def get_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    query = update.callback_query
-    await query.answer()
+def remove_channel(chat_id):
 
-    try:
+    conn = sqlite3.connect(DB_FILE)
 
-        # Current time + 2 minutes
-        expire_time = (
-            datetime.now(timezone.utc)
-            + timedelta(minutes=2)
-        )
+    cursor = conn.cursor()
 
-        invite = await context.bot.create_chat_invite_link(
-            chat_id=CHANNEL_ID,
-            expire_date=expire_time,
-            creates_join_request=True
-        )
+    cursor.execute(
+        "DELETE FROM channels WHERE chat_id = ?",
+        (str(chat_id),)
+    )
 
-        await query.edit_message_text(
-            "📩 Join Request Link Created!\n\n"
-            f"🔗 {invite.invite_link}\n\n"
-            "⏳ This link expires automatically after 2 minutes.\n\n"
-            "⚠️ Click the link and send a Join Request."
-        )
+    deleted = cursor.rowcount
 
-    except Exception as error:
+    conn.commit()
+    conn.close()
 
-        print("ERROR:", error)
+    return deleted > 0
 
-        await query.edit_message_text(
-            "❌ Couldn't create the Join Request link.\n\n"
-            "Please check that the bot is an administrator "
-            "of the channel and has permission to manage "
-            "invite links."
-        )
+
+def get_channels():
+
+    conn = sqlite3.connect(DB_FILE)
+
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT chat_id, title, username FROM channels ORDER BY id"
+    )
+
+    channels = cursor.fetchall()
+
+    conn.close()
+
+    return channels
+
+
+# =========================
+# FLASK
+# =========================
+
+@app.route("/")
+def home():
+    return "Multi Channel Telegram Bot is running!"
 
 
 def run_server():
@@ -92,39 +123,28 @@ def run_server():
     )
 
 
-def main():
+# =========================
+# ADMIN CHECK
+# =========================
 
-    # Start Flask server for Render
-    Thread(
-        target=run_server,
-        daemon=True
-    ).start()
+def is_admin(update: Update):
 
-    # Start Telegram bot
-    application = (
-        Application
-        .builder()
-        .token(BOT_TOKEN)
-        .build()
+    return (
+        update.effective_user
+        and update.effective_user.id == ADMIN_ID
     )
 
-    application.add_handler(
-        CommandHandler("start", start)
-    )
 
-    application.add_handler(
-        CallbackQueryHandler(
-            get_link,
-            pattern="^get_link$"
-        )
-    )
+# =========================
+# START
+# =========================
 
-    print("Bot started!")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    application.run_polling()
+    channels = get_channels()
 
+    if not channels:
 
-if __name__ == "__main__":
-    main()
+        await update.message.reply_text(
 
 #Hi
