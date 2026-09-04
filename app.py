@@ -145,6 +145,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not channels:
 
-        await update.message.reply_text(
+        await update.message.reply_text()
 
 #Hi
